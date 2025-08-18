@@ -1,0 +1,225 @@
+// ──────────────────────────────────────────────────────────────────────────────
+// Prisma config
+// ──────────────────────────────────────────────────────────────────────────────
+generator client {
+  provider = "prisma-client-js"
+  // opcional: cambia la ruta si quieres
+  // output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Enums
+// ──────────────────────────────────────────────────────────────────────────────
+enum RiskTolerance {
+  CONSERVATIVE
+  MODERATE
+  AGGRESSIVE
+}
+
+enum Periodicity {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum Currency {
+  USD
+  MXN
+  EUR
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Core: usuarios y perfil
+// ──────────────────────────────────────────────────────────────────────────────
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile         Profile?
+  goals           Goal[]
+  contributions   Contribution[]
+  watchlist       WatchlistItem[]
+  notes           Note[]
+  portfolios      Portfolio[]
+  digests         DigestSubscription[]
+  recommendations Recommendation[]
+
+  snapshots PriceSnapshot[]
+
+  @@index([email])
+}
+
+model Profile {
+  id            String        @id @default(cuid())
+  userId        String        @unique
+  firstName     String?
+  lastName      String?
+  country       String? // e.g. "MX"
+  baseCurrency  Currency      @default(USD)
+  birthYear     Int?
+  riskTolerance RiskTolerance @default(MODERATE)
+  monthlyBudget Decimal? // cuánto puede invertir al mes
+  targetYears   Int? // horizonte mental (años)
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Metas y aportaciones
+// ──────────────────────────────────────────────────────────────────────────────
+model Goal {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String // "Meta 1M USD"
+  targetAmount Decimal
+  targetDate   DateTime
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, targetDate])
+}
+
+model Contribution {
+  id     String   @id @default(cuid())
+  userId String
+  amount Decimal
+  date   DateTime @default(now())
+  note   String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, date])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Watchlist y notas
+// ──────────────────────────────────────────────────────────────────────────────
+model WatchlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  symbol    String // "AAPL", "MSFT"
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, symbol])
+  @@index([symbol])
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  userId    String
+  symbol    String
+  content   String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, symbol, createdAt])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Portafolio y posiciones (self-reported, no broker)
+// ──────────────────────────────────────────────────────────────────────────────
+model Portfolio {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String   @default("Default")
+  createdAt DateTime @default(now())
+
+  user      User       @relation(fields: [userId], references: [id])
+  positions Position[]
+}
+
+model Position {
+  id          String   @id @default(cuid())
+  portfolioId String
+  symbol      String
+  quantity    Decimal
+  avgPrice    Decimal // precio promedio
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id])
+
+  @@index([portfolioId, symbol])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+model PriceSnapshot {
+  id        String   @id @default(cuid())
+  userId    String
+  symbol    String
+  price     Decimal
+  asOf      DateTime
+  source    String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, symbol, asOf])
+}
+
+// Cache de precios/noticias (para no pegar la API todo el tiempo)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Recomendaciones/one-pagers generadas por la IA
+// ──────────────────────────────────────────────────────────────────────────────
+model Recommendation {
+  id         String   @id @default(cuid())
+  userId     String
+  symbol     String
+  // valores numéricos opcionales
+  intrinsic  Decimal?
+  buyBelow   Decimal?
+  sellAbove  Decimal?
+  confidence Int? // 0..100
+  // one-pager en texto/markdown (resumen)
+  summaryMd  String?
+  runDate    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, runDate])
+  @@index([userId, symbol, runDate])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Suscripción al digest (cuando y cómo enviar)
+// ──────────────────────────────────────────────────────────────────────────────
+model DigestSubscription {
+  id          String      @id @default(cuid())
+  userId      String      @unique
+  active      Boolean     @default(true)
+  periodicity Periodicity @default(DAILY)
+  // 13 = 8am CDMX (UTC-5/6 depende horario). Ajustable por usuario.
+  hourUtc     Int         @default(13)
+  lastSentAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model QuoteCache {
+  symbol        String  @id
+  price         Decimal
+  change        Decimal?
+  changePercent Decimal?
+  fetchedAt     DateTime @default(now())
+}
+
+
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
