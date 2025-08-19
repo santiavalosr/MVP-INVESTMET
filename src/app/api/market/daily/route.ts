@@ -1,20 +1,21 @@
 // src/app/api/market/daily/route.ts
 import { NextResponse } from "next/server";
-import { avDaily } from "@/lib/alpha";
+import { market } from "@/lib/market";
+
+export const revalidate = 0;
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const symbol = searchParams.get("symbol");
-  if (!symbol) {
-    return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
-  }
+  const symbol = (searchParams.get("symbol") || "").toUpperCase();
+  const type = (searchParams.get("type") || "EQUITY").toUpperCase() as "EQUITY" | "CRYPTO";
+  const days = Number(searchParams.get("days") || "90");
+  if (!symbol) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
 
   try {
-    const data = await avDaily(symbol);
+    const data = await market.history(symbol, type, days);
     return NextResponse.json(data);
-  } catch (e: any) {
-    console.error("daily error:", e?.message || e);
-    return NextResponse.json({ error: "Failed to fetch daily" }, { status: 500 });
+  } catch (e:any) {
+    return NextResponse.json({ error: e.message ?? "Error" }, { status: 500 });
   }
 }
 

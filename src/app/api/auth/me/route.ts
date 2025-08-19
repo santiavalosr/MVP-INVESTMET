@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSessionUser } from "@/lib/auth"; // <-- cambia getSession por getSessionUser
 
 export async function GET() {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ user: null }, { status: 200 });
-  return NextResponse.json({ user: session });
+  const user = await getSessionUser();
+  // Devuelve null si no hay sesión, o datos básicos del usuario si la hay
+  return NextResponse.json({
+    user: user ? { id: user.id, email: user.email } : null,
+  });
 }
-
 

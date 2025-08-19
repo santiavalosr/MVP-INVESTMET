@@ -1,39 +1,78 @@
-import { SignJWT, jwtVerify } from "jose";
+// src/lib/auth.ts
 import { cookies } from "next/headers";
+import { prisma } from "@/lib/prisma";
+import { randomUUID } from "crypto";
 
-const secret = new TextEncoder().encode(
-  process.env.AUTH_SECRET || "dev-secret-change-me"
-);
-const COOKIE_NAME = "mvp_token";
+/** Nombre de la cookie donde guardamos el id de sesión */
+const SESSION_COOKIE = "session";
 
-export async function createSession(user: { id: string; email: string }) {
-  const token = await new SignJWT({ sub: user.id, email: user.email })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("7d")
-    .sign(secret);
+/** Crea una sesión para un usuario y setea cookie httpOnly */
+export async function createSession(userId: string) {
+  const id = randomUUID();
 
-  (await cookies()).set(COOKIE_NAME, token, {
+  await prisma.session.create({
+    data: { id, userId },
+  });
+
+  const c = await cookies();
+  c.set(SESSION_COOKIE, id, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 24 * 7,
+    maxAge: 60 * 60 * 24 * 7, // 7 días
   });
+
+  return id;
 }
 
-export async function getSession() {
-  const token = (await cookies()).get(COOKIE_NAME)?.value;
-  if (!token) return null;
-  try {
-    const { payload } = await jwtVerify(token, secret);
-    return { userId: payload.sub as string, email: payload.email as string };
-  } catch {
-    return null;
+/** Devuelve el id de sesión desde la cookie (o null si no hay) */
+export async function getSessionId(): Promise<string | null> {
+  const c = await cookies();
+  const v = c.get(SESSION_COOKIE)?.value;
+  return v ?? null;
+}
+
+/** Devuelve el usuario logueado (via cookie de sesión) o null */
+export async function getSessionUser() {
+  const sid = await getSessionId();
+  if (!sid) return null;
+
+  const session = await prisma.session.findUnique({
+    where: { id: sid },
+    include: { user: true },
+  });
+
+  return session?.user ?? null;
+}
+
+/** Lanza 401 si no hay usuario; devuelve el user id si hay */
+export async function requireUserId() {
+  const user = await getSessionUser();
+  if (!user) {
+    const err: any = new Error("Unauthorized");
+    err.status = 401;
+    throw err;
   }
+  return user.id;
 }
 
-export async function clearSession() {
-  (await cookies()).set(COOKIE_NAME, "", { path: "/", maxAge: 0 });
+/** Cierra la sesión actual (borra cookie y elimina registro) */
+export async function destroySession() {
+  const sid = await getSessionId();
+  const c = await cookies();
+
+  if (sid) {
+    await prisma.session.delete({ where: { id: sid } }).catch(() => {});
+  }
+
+  // Expira cookie
+  c.set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
 }
 

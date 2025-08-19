@@ -3,13 +3,21 @@
 // ──────────────────────────────────────────────────────────────────────────────
 generator client {
   provider = "prisma-client-js"
-  // opcional: cambia la ruta si quieres
-  // output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model Session {
+  id        String    @id // si quieres que Prisma lo genere: @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  @@index([userId])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -33,6 +41,12 @@ enum Currency {
   EUR
 }
 
+enum AssetType {
+  EQUITY
+  CRYPTO
+  INDEX
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Core: usuarios y perfil
 // ──────────────────────────────────────────────────────────────────────────────
@@ -51,8 +65,9 @@ model User {
   portfolios      Portfolio[]
   digests         DigestSubscription[]
   recommendations Recommendation[]
+  snapshots       PriceSnapshot[]
 
-  snapshots PriceSnapshot[]
+  sessions Session[] // <-- AGREGA ESTO
 
   @@index([email])
 }
@@ -62,12 +77,12 @@ model Profile {
   userId        String        @unique
   firstName     String?
   lastName      String?
-  country       String? // e.g. "MX"
+  country       String?
   baseCurrency  Currency      @default(USD)
   birthYear     Int?
   riskTolerance RiskTolerance @default(MODERATE)
-  monthlyBudget Decimal? // cuánto puede invertir al mes
-  targetYears   Int? // horizonte mental (años)
+  monthlyBudget Decimal?
+  targetYears   Int?
 
   user User @relation(fields: [userId], references: [id])
 }
@@ -78,7 +93,7 @@ model Profile {
 model Goal {
   id           String   @id @default(cuid())
   userId       String
-  name         String // "Meta 1M USD"
+  name         String
   targetAmount Decimal
   targetDate   DateTime
   createdAt    DateTime @default(now())
@@ -104,14 +119,15 @@ model Contribution {
 // Watchlist y notas
 // ──────────────────────────────────────────────────────────────────────────────
 model WatchlistItem {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    String
-  symbol    String // "AAPL", "MSFT"
-  createdAt DateTime @default(now())
+  symbol    String
+  type      AssetType @default(EQUITY)
+  createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id])
 
-  @@unique([userId, symbol])
+  @@unique([userId, symbol, type])
   @@index([symbol])
 }
 
@@ -128,7 +144,7 @@ model Note {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Portafolio y posiciones (self-reported, no broker)
+// Portafolio y posiciones
 // ──────────────────────────────────────────────────────────────────────────────
 model Portfolio {
   id        String   @id @default(cuid())
@@ -145,7 +161,7 @@ model Position {
   portfolioId String
   symbol      String
   quantity    Decimal
-  avgPrice    Decimal // precio promedio
+  avgPrice    Decimal
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -154,6 +170,8 @@ model Position {
   @@index([portfolioId, symbol])
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Snapshots de precio
 // ──────────────────────────────────────────────────────────────────────────────
 model PriceSnapshot {
   id        String   @id @default(cuid())
@@ -169,22 +187,18 @@ model PriceSnapshot {
   @@index([userId, symbol, asOf])
 }
 
-// Cache de precios/noticias (para no pegar la API todo el tiempo)
 // ──────────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Recomendaciones/one-pagers generadas por la IA
+// Recomendaciones / one-pagers (IA)
 // ──────────────────────────────────────────────────────────────────────────────
 model Recommendation {
-  id         String   @id @default(cuid())
-  userId     String
-  symbol     String
-  // valores numéricos opcionales
+  id     String @id @default(cuid())
+  userId String
+  symbol String
+
   intrinsic  Decimal?
   buyBelow   Decimal?
   sellAbove  Decimal?
-  confidence Int? // 0..100
-  // one-pager en texto/markdown (resumen)
+  confidence Int?
   summaryMd  String?
   runDate    DateTime @default(now())
 
@@ -195,31 +209,26 @@ model Recommendation {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Suscripción al digest (cuando y cómo enviar)
+// Suscripción al digest
 // ──────────────────────────────────────────────────────────────────────────────
 model DigestSubscription {
   id          String      @id @default(cuid())
   userId      String      @unique
   active      Boolean     @default(true)
   periodicity Periodicity @default(DAILY)
-  // 13 = 8am CDMX (UTC-5/6 depende horario). Ajustable por usuario.
   hourUtc     Int         @default(13)
   lastSentAt  DateTime?
 
   user User @relation(fields: [userId], references: [id])
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Cache de cotizaciones (server-side)
+// ──────────────────────────────────────────────────────────────────────────────
 model QuoteCache {
-  symbol        String  @id
+  symbol        String   @id
   price         Decimal
   change        Decimal?
   changePercent Decimal?
   fetchedAt     DateTime @default(now())
 }
-
-
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
